@@ -7,5 +7,9 @@ resources:
   - minio
   - automq
   - influxdb
+  - nessie
+  - trino
+  - iceberg-init
+  - spark
   - grafana
   - kafka-ui

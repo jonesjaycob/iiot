@@ -1,0 +1,51 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: iceberg-init-tables
+  namespace: industrial-iot
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: merge
+  labels:
+    app: iceberg-init
+spec:
+  template:
+    metadata:
+      labels:
+        app: iceberg-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: trino-cli
+          image: trinodb/trino:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Waiting for Trino to be ready..."
+              until curl -sf http://trino.industrial-iot.svc.cluster.local:8080/v1/info > /dev/null 2>&1; do
+                echo "  Trino not ready, retrying in 10s..."
+                sleep 10
+              done
+              echo "Trino is ready. Running init SQL..."
+              trino --server http://trino.industrial-iot.svc.cluster.local:8080 \
+                    --catalog iceberg \
+                    --schema manufacturing \
+                    -f /sql/init.sql
+              echo "Iceberg tables created successfully."
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+              cpu: 250m
+      volumes:
+        - name: sql
+          configMap:
+            name: iceberg-init-sql
+  backoffLimit: 10

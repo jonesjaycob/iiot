@@ -37,5 +37,6 @@ spec:
               echo "Creating buckets..."
               mc mb --ignore-existing local/automq-data
               mc mb --ignore-existing local/process-archive
+              mc mb --ignore-existing local/iceberg-warehouse
               echo "Buckets created successfully."
   backoffLimit: 10

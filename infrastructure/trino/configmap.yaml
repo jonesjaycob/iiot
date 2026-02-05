@@ -1,0 +1,47 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-config
+  namespace: industrial-iot
+data:
+  node.properties: |
+    node.environment=dockerdesktop
+    node.data-dir=/data/trino
+
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port=8080
+    discovery.uri=http://localhost:8080
+    query.max-memory=1GB
+    query.max-memory-per-node=1GB
+
+  jvm.config: |
+    -server
+    -Xmx2g
+    -XX:InitialRAMPercentage=40.0
+    -XX:MaxRAMPercentage=80.0
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+ExplicitGCInvokesConcurrent
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:+ExitOnOutOfMemoryError
+    -Djdk.attach.allowAttachSelf=true
+
+  log.properties: |
+    io.trino=INFO
+
+  iceberg.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=nessie
+    iceberg.nessie-catalog.uri=http://nessie.industrial-iot.svc.cluster.local:19120/api/v1
+    iceberg.nessie-catalog.ref=main
+    iceberg.nessie-catalog.default-warehouse-dir=s3://iceberg-warehouse/
+    fs.native-s3.enabled=true
+    s3.endpoint=http://minio.industrial-iot.svc.cluster.local:9000
+    s3.path-style-access=true
+    s3.aws-access-key=minioadmin
+    s3.aws-secret-key=minio-secret-key-change-me
+    s3.region=us-east-1
+    iceberg.file-format=PARQUET

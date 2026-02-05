@@ -11,13 +11,21 @@ OPC UA Mock Server
        |
    AutoMQ (Kafka-compatible, S3-backed via MinIO)
        |
-  +----+----+
-  |         |
-InfluxDB   MinIO/S3
-(historian) (raw archive)
-  |
-Grafana
-(dashboards)
+  +----+----+--------------------+
+  |         |                    |
+InfluxDB   MinIO/S3         MinIO/S3
+(historian) (raw archive)   (iceberg-warehouse)
+  |                              |
+  |                        Nessie Catalog
+  |                       (Iceberg metadata)
+  |                         /         \
+  |                      Trino       Spark
+  |                   (SQL query)  (compaction)
+  |                      |
+  +----------+-----------+
+             |
+          Grafana
+       (dashboards)
 ```
 
 ## Prerequisites
@@ -56,14 +64,26 @@ kubectl apply -k infrastructure/automq/
 kubectl apply -k infrastructure/influxdb/
 kubectl -n monitoring wait --for=condition=Ready helmrelease/influxdb2 --timeout=300s
 
-# 7. Deploy Grafana
+# 7. Deploy Nessie (Iceberg catalog)
+kubectl apply -k infrastructure/nessie/
+
+# 8. Deploy Trino (SQL query engine)
+kubectl apply -k infrastructure/trino/
+
+# 9. Deploy Iceberg init job (creates tables)
+kubectl apply -k infrastructure/iceberg-init/
+
+# 10. Deploy Spark compaction (CronJob)
+kubectl apply -k infrastructure/spark/
+
+# 11. Deploy Grafana
 kubectl apply -k infrastructure/grafana/
 kubectl -n monitoring wait --for=condition=Ready helmrelease/grafana --timeout=300s
 
-# 8. Deploy Kafka UI
+# 12. Deploy Kafka UI
 kubectl apply -k infrastructure/kafka-ui/
 
-# 9. Deploy applications
+# 13. Deploy applications
 kubectl apply -k apps/opcua-mock/
 kubectl apply -k apps/akri/
 kubectl apply -k apps/opcua-kafka-bridge/
@@ -96,6 +116,18 @@ kubectl exec -n industrial-iot automq-broker-0 -- \
 # Verify MinIO buckets
 kubectl exec -n industrial-iot deploy/minio -- mc alias set local http://localhost:9000 minioadmin minio-secret-key-change-me
 kubectl exec -n industrial-iot deploy/minio -- mc ls local/
+
+# Verify Nessie is healthy
+kubectl exec -n industrial-iot deploy/nessie -- curl -s http://localhost:19120/api/v2/config
+
+# Verify Trino can see Iceberg catalog
+kubectl exec -n industrial-iot deploy/trino -- trino --execute "SHOW CATALOGS"
+
+# Verify Iceberg tables exist
+kubectl exec -n industrial-iot deploy/trino -- trino --execute "SHOW TABLES FROM iceberg.manufacturing"
+
+# Check Spark compaction CronJob
+kubectl get cronjob -n industrial-iot
 ```
 
 ## Access Services
@@ -105,6 +137,7 @@ kubectl exec -n industrial-iot deploy/minio -- mc ls local/
 | Grafana | http://localhost:30300 | admin / admin |
 | MinIO Console | http://localhost:30301 | minioadmin / minio-secret-key-change-me |
 | Kafka UI | http://localhost:30302 | (no auth) |
+| Trino | http://localhost:30303 | (no auth) |
 
 Or use port-forwarding:
 
@@ -117,20 +150,25 @@ kubectl port-forward -n industrial-iot svc/minio-console 9001:9001
 
 ### Namespaces
 
-- `industrial-iot` -- Akri, OPC UA mock, AutoMQ, bridge, MinIO
+- `industrial-iot` -- Akri, OPC UA mock, AutoMQ, bridge, MinIO, Nessie, Trino, Spark
 - `monitoring` -- InfluxDB, Grafana
 
 ### Dependency Order (enforced by Flux)
 
 ```
-1. Namespaces + Helm sources
-2. MinIO         (S3 must be ready for AutoMQ)
-3. AutoMQ        (streaming must be ready for bridge)
-4. InfluxDB      (historian must be ready for Grafana)
-5. Grafana
-6. OPC UA Mock
-7. Akri          (discovers mock server)
-8. Bridge        (connects OPC UA to AutoMQ)
+1.  Namespaces + Helm sources
+2.  MinIO          (S3 must be ready for AutoMQ + Iceberg)
+3.  AutoMQ         (streaming must be ready for bridge)
+4.  InfluxDB       (historian must be ready for Grafana)
+5.  Nessie         (Iceberg catalog, must be ready for Trino)
+6.  Trino          (SQL engine, needs Nessie + MinIO)
+7.  Iceberg Init   (creates tables via Trino)
+8.  Spark          (compaction CronJob, needs Nessie + MinIO)
+9.  Grafana        (dashboards, InfluxDB + Trino datasources)
+10. Kafka UI
+11. OPC UA Mock
+12. Akri           (discovers mock server)
+13. Bridge         (connects OPC UA to AutoMQ)
 ```
 
 ### Components
@@ -145,6 +183,9 @@ kubectl port-forward -n industrial-iot svc/minio-console 9001:9001
 | Kafka UI (Kafbat) | `ghcr.io/kafbat/kafka-ui:latest` | industrial-iot |
 | OPC UA Mock | `mcr.microsoft.com/iotedge/opc-plc:latest` | industrial-iot |
 | Akri | `akri-helm-charts/akri` Helm chart | industrial-iot |
+| Nessie | `ghcr.io/projectnessie/nessie:latest` | industrial-iot |
+| Trino | `trinodb/trino:latest` | industrial-iot |
+| Spark Compaction | `bitnami/spark:latest` (CronJob) | industrial-iot |
 | Bridge | Placeholder (alpine) -- see below | industrial-iot |
 
 ### OPC UA Kafka Bridge
@@ -158,6 +199,28 @@ The bridge deployment is currently a **placeholder**. To make it functional, bui
 
 The ConfigMap at `apps/opcua-kafka-bridge/configmap.yaml` has the endpoint and topic configuration ready.
 
+### Apache Iceberg Lakehouse
+
+The stack includes an Iceberg-based data lakehouse for long-term analytics at TB/day scale:
+
+- **Nessie** provides a Git-like versioned catalog for Iceberg table metadata (branches, tags, audit trail)
+- **Trino** provides interactive SQL queries over Iceberg tables stored in MinIO
+- **Spark** runs as a CronJob every 6 hours to compact small files and expire old snapshots
+- **Iceberg Init Job** creates the initial `manufacturing.opcua_telemetry` table partitioned by `day(ts)` and `device_id`
+
+Query Iceberg tables via Trino:
+
+```bash
+# Connect to Trino CLI
+kubectl exec -n industrial-iot deploy/trino -- trino
+
+# List tables
+SHOW TABLES FROM iceberg.manufacturing;
+
+# Query telemetry
+SELECT * FROM iceberg.manufacturing.opcua_telemetry LIMIT 10;
+```
+
 ## Teardown
 
 ```bash
@@ -169,6 +232,10 @@ kubectl delete -k apps/opcua-mock/
 # Remove infrastructure (reverse order)
 kubectl delete -k infrastructure/kafka-ui/
 kubectl delete -k infrastructure/grafana/
+kubectl delete -k infrastructure/spark/
+kubectl delete -k infrastructure/iceberg-init/
+kubectl delete -k infrastructure/trino/
+kubectl delete -k infrastructure/nessie/
 kubectl delete -k infrastructure/influxdb/
 kubectl delete -k infrastructure/automq/
 kubectl delete -k infrastructure/minio/
@@ -188,5 +255,7 @@ flux uninstall
 | `minio-credentials` | industrial-iot | `rootUser`, `rootPassword` |
 | `influxdb-auth` | monitoring | `admin-password`, `admin-token` |
 | `influxdb-auth` | industrial-iot | `admin-token` (copy for bridge) |
+| `trino-s3-credentials` | industrial-iot | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+| `spark-s3-credentials` | industrial-iot | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
 
 For production, replace with Sealed Secrets or SOPS.

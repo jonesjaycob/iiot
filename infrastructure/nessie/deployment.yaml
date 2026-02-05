@@ -1,0 +1,55 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nessie
+  namespace: industrial-iot
+  labels:
+    app: nessie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nessie
+  template:
+    metadata:
+      labels:
+        app: nessie
+    spec:
+      containers:
+        - name: nessie
+          image: ghcr.io/projectnessie/nessie:latest
+          ports:
+            - containerPort: 19120
+              name: api
+          env:
+            - name: NESSIE_VERSION_STORE_TYPE
+              value: ROCKSDB
+            - name: NESSIE_ROCKSDB_STORE_PATH
+              value: /rocksdb/nessie
+          volumeMounts:
+            - name: rocksdb-data
+              mountPath: /rocksdb
+          readinessProbe:
+            httpGet:
+              path: /api/v2/config
+              port: 19120
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v2/config
+              port: 19120
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+      volumes:
+        - name: rocksdb-data
+          persistentVolumeClaim:
+            claimName: nessie-rocksdb

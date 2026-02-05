@@ -1,0 +1,65 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spark-compaction
+  namespace: industrial-iot
+  labels:
+    app: spark-compaction
+spec:
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: spark-compaction
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: spark
+              image: bitnami/spark:latest
+              command:
+                - /opt/bitnami/spark/bin/spark-submit
+                - --master
+                - local[*]
+                - --packages
+                - org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.7.1,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.99.0,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262
+                - /scripts/compact.py
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: spark-s3-credentials
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: spark-s3-credentials
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: NESSIE_URI
+                  value: "http://nessie.industrial-iot.svc.cluster.local:19120/api/v2"
+                - name: S3_ENDPOINT
+                  value: "http://minio.industrial-iot.svc.cluster.local:9000"
+                - name: WAREHOUSE
+                  value: "s3://iceberg-warehouse/"
+                - name: TABLES
+                  value: "manufacturing.opcua_telemetry"
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+              resources:
+                requests:
+                  memory: 512Mi
+                  cpu: 250m
+                limits:
+                  memory: 2Gi
+                  cpu: 2
+          volumes:
+            - name: script
+              configMap:
+                name: spark-compaction-script

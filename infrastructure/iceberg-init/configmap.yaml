@@ -1,0 +1,53 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iceberg-init-sql
+  namespace: industrial-iot
+data:
+  init.sql: |
+    -- Create manufacturing schema
+    CREATE SCHEMA IF NOT EXISTS iceberg.manufacturing;
+
+    -- OPC UA telemetry table, partitioned by day and device
+    CREATE TABLE IF NOT EXISTS iceberg.manufacturing.opcua_telemetry (
+        ts          TIMESTAMP(6) WITH TIME ZONE,
+        device_id   VARCHAR,
+        node_id     VARCHAR,
+        value       DOUBLE,
+        quality     VARCHAR,
+        source      VARCHAR
+    )
+    WITH (
+        format = 'PARQUET',
+        partitioning = ARRAY['day(ts)', 'device_id']
+    );
+
+    -- OPC UA events table for alarms and state changes
+    CREATE TABLE IF NOT EXISTS iceberg.manufacturing.opcua_events (
+        ts          TIMESTAMP(6) WITH TIME ZONE,
+        device_id   VARCHAR,
+        event_type  VARCHAR,
+        severity    INTEGER,
+        message     VARCHAR,
+        source_node VARCHAR
+    )
+    WITH (
+        format = 'PARQUET',
+        partitioning = ARRAY['day(ts)', 'event_type']
+    );
+
+    -- Aggregated metrics table for dashboards
+    CREATE TABLE IF NOT EXISTS iceberg.manufacturing.metrics_hourly (
+        hour        TIMESTAMP(6) WITH TIME ZONE,
+        device_id   VARCHAR,
+        node_id     VARCHAR,
+        min_value   DOUBLE,
+        max_value   DOUBLE,
+        avg_value   DOUBLE,
+        count       BIGINT
+    )
+    WITH (
+        format = 'PARQUET',
+        partitioning = ARRAY['day(hour)', 'device_id']
+    );
