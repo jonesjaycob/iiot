@@ -1,0 +1,40 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: minio
+  namespace: industrial-iot
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: minio
+      version: "5.*"
+      sourceRef:
+        kind: HelmRepository
+        name: minio
+        namespace: flux-system
+  values:
+    mode: standalone
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: hostpath
+    existingSecret: minio-credentials
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+    service:
+      type: ClusterIP
+      port: 9000
+    consoleService:
+      type: NodePort
+      port: 9001
+      nodePort: 30301
+    environment:
+      MINIO_BROWSER: "on"

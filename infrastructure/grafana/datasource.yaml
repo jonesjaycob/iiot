@@ -1,0 +1,24 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-influxdb
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  influxdb-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: InfluxDB
+        type: influxdb
+        access: proxy
+        url: http://influxdb2-influxdb2.monitoring.svc.cluster.local:8086
+        jsonData:
+          version: Flux
+          organization: industrial
+          defaultBucket: process-data
+        secureJsonData:
+          token: influxdb-admin-token-change-me
+        isDefault: true
+        editable: true

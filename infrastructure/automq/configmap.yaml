@@ -1,0 +1,20 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: automq-config
+  namespace: industrial-iot
+data:
+  # S3 backend pointing to MinIO
+  KAFKA_S3_ENDPOINT: "http://minio.industrial-iot.svc.cluster.local:9000"
+  KAFKA_S3_BUCKET: "automq-data"
+  KAFKA_S3_REGION: "us-east-1"
+  KAFKA_S3_PATH_STYLE: "true"
+  # Cluster settings
+  KAFKA_CLUSTER_ID: "iiot-automq-cluster-001"
+  # Controller quorum voters (single-node)
+  KAFKA_CONTROLLER_QUORUM_VOTERS: "0@automq-controller-0.automq-controller-headless.industrial-iot.svc.cluster.local:9093"
+  # Auto-create topics
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+  KAFKA_NUM_PARTITIONS: "3"
+  KAFKA_DEFAULT_REPLICATION_FACTOR: "1"

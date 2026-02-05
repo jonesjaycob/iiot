@@ -1,0 +1,38 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: influxdb2
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: influxdb2
+      version: "2.*"
+      sourceRef:
+        kind: HelmRepository
+        name: influxdata
+        namespace: flux-system
+  values:
+    image:
+      tag: "2.7"
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: hostpath
+    adminUser:
+      organization: industrial
+      bucket: process-data
+      retention_policy: "0s"
+      existingSecret: influxdb-auth
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+    service:
+      type: ClusterIP
+      port: 8086

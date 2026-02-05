@@ -1,0 +1,23 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opcua-kafka-bridge-config
+  namespace: industrial-iot
+data:
+  # OPC UA endpoint
+  OPCUA_ENDPOINT: "opc.tcp://opcua-mock-plc.industrial-iot.svc.cluster.local:50000"
+  OPCUA_SECURITY_MODE: "None"
+  OPCUA_SECURITY_POLICY: "None"
+  # Kafka broker config (AutoMQ)
+  KAFKA_BOOTSTRAP_SERVERS: "automq-broker.industrial-iot.svc.cluster.local:9092"
+  KAFKA_TOPIC: "opcua.telemetry"
+  KAFKA_EVENTS_TOPIC: "opcua.events"
+  # InfluxDB sink config
+  INFLUXDB_URL: "http://influxdb2-influxdb2.monitoring.svc.cluster.local:8086"
+  INFLUXDB_ORG: "industrial"
+  INFLUXDB_BUCKET: "process-data"
+  # OPC UA Node IDs to subscribe (Microsoft OPC PLC Simulator nodes)
+  OPCUA_NODE_IDS: "ns=2;s=FastUInt1,ns=2;s=FastUInt2,ns=2;s=FastUInt3,ns=2;s=SlowUInt1,ns=2;s=SlowUInt2"
+  # Poll interval in milliseconds
+  POLL_INTERVAL_MS: "1000"

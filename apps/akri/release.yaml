@@ -1,0 +1,39 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: akri
+  namespace: industrial-iot
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: akri
+      version: "0.*"
+      sourceRef:
+        kind: HelmRepository
+        name: akri-helm-charts
+        namespace: flux-system
+  values:
+    agent:
+      enabled: true
+      image:
+        pullPolicy: Always
+    controller:
+      enabled: true
+      image:
+        pullPolicy: Always
+    opcua:
+      discovery:
+        enabled: true
+      configuration:
+        enabled: true
+        name: akri-opcua
+        discoveryDetails:
+          discoveryUrls:
+            - "opc.tcp://opcua-mock-plc.industrial-iot.svc.cluster.local:50000"
+          applicationNames:
+            action: Include
+            items: []
+        brokerProperties: {}
+        capacity: 1

@@ -1,0 +1,9 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-ui-config
+  namespace: industrial-iot
+data:
+  KAFKA_CLUSTERS_0_NAME: "automq-local"
+  KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "automq-broker.industrial-iot.svc.cluster.local:9092"

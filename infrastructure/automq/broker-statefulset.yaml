@@ -1,0 +1,106 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: automq-broker
+  namespace: industrial-iot
+  labels:
+    app: automq
+    component: broker
+spec:
+  serviceName: automq-broker-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: automq
+      component: broker
+  template:
+    metadata:
+      labels:
+        app: automq
+        component: broker
+    spec:
+      containers:
+        - name: automq-broker
+          image: automqinc/automq:latest
+          ports:
+            - containerPort: 9092
+              name: broker
+          env:
+            - name: KAFKA_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootUser
+            - name: KAFKA_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: rootPassword
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xms512m -Xmx1g"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              CLUSTER_ID="iiot-automq-clust"
+              S3_URL="0@s3://automq-data?region=us-east-1&endpoint=http://minio.industrial-iot.svc.cluster.local:9000&pathStyle=true&authType=static&accessKey=${KAFKA_S3_ACCESS_KEY}&secretKey=${KAFKA_S3_SECRET_KEY}"
+
+              cat > /tmp/broker.properties <<'PROPEOF'
+              process.roles=broker
+              node.id=1
+              controller.quorum.bootstrap.servers=automq-controller-0.automq-controller-headless.industrial-iot.svc.cluster.local:9093
+              listeners=PLAINTEXT://:9092
+              advertised.listeners=PLAINTEXT://automq-broker-0.automq-broker-headless.industrial-iot.svc.cluster.local:9092
+              inter.broker.listener.name=PLAINTEXT
+              controller.listener.names=CONTROLLER
+              log.dirs=/var/lib/kafka/data/kraft-broker-logs
+              num.partitions=3
+              default.replication.factor=1
+              offsets.topic.replication.factor=1
+              transaction.state.log.replication.factor=1
+              transaction.state.log.min.isr=1
+              auto.create.topics.enable=true
+              elasticstream.enable=true
+              s3.wal.cache.size=209715200
+              s3.wal.upload.threshold=104857600
+              s3.block.cache.size=209715200
+              PROPEOF
+              echo "s3.wal.path=${S3_URL}" >> /tmp/broker.properties
+              echo "s3.data.buckets=${S3_URL}" >> /tmp/broker.properties
+              echo "s3.ops.buckets=${S3_URL}" >> /tmp/broker.properties
+              # Strip leading whitespace from properties
+              sed -i 's/^[[:space:]]*//' /tmp/broker.properties
+
+              # Clear old data and reformat
+              rm -rf /var/lib/kafka/data/kraft-broker-logs
+              echo "Formatting KRaft storage..."
+              /opt/kafka/kafka/bin/kafka-storage.sh format \
+                --config /tmp/broker.properties \
+                --cluster-id "${CLUSTER_ID}" \
+                --ignore-formatted
+
+              echo "Waiting for controller to be available..."
+              sleep 15
+
+              echo "Starting AutoMQ broker..."
+              exec /opt/kafka/kafka/bin/kafka-server-start.sh /tmp/broker.properties
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 250m
+            limits:
+              memory: 2Gi
+              cpu: 1
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: hostpath
+        resources:
+          requests:
+            storage: 5Gi
