@@ -26,6 +26,8 @@ spec:
           ports:
             - containerPort: 9092
               name: broker
+            - containerPort: 9094
+              name: external
           env:
             - name: KAFKA_S3_ACCESS_KEY
               valueFrom:
@@ -50,8 +52,9 @@ spec:
               process.roles=broker
               node.id=1
               controller.quorum.bootstrap.servers=automq-controller-0.automq-controller-headless.industrial-iot.svc.cluster.local:9093
-              listeners=PLAINTEXT://:9092
-              advertised.listeners=PLAINTEXT://automq-broker-0.automq-broker-headless.industrial-iot.svc.cluster.local:9092
+              listeners=PLAINTEXT://:9092,EXTERNAL://:9094
+              advertised.listeners=PLAINTEXT://automq-broker-0.automq-broker-headless.industrial-iot.svc.cluster.local:9092,EXTERNAL://localhost:30092
+              listener.security.protocol.map=PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
               inter.broker.listener.name=PLAINTEXT
               controller.listener.names=CONTROLLER
               log.dirs=/var/lib/kafka/data/kraft-broker-logs
