@@ -138,6 +138,7 @@ kubectl get cronjob -n industrial-iot
 | MinIO Console | http://localhost:30301 | minioadmin / minio-secret-key-change-me |
 | Kafka UI | http://localhost:30302 | (no auth) |
 | Trino | http://localhost:30303 | (no auth) |
+| AutoMQ (Kafka) | localhost:30092 | (no auth) |
 
 Or use port-forwarding:
 
@@ -145,6 +146,20 @@ Or use port-forwarding:
 kubectl port-forward -n monitoring svc/grafana 3000:3000
 kubectl port-forward -n industrial-iot svc/minio-console 9001:9001
 ```
+
+### External Kafka Access
+
+AutoMQ exposes an `EXTERNAL` listener on NodePort `30092` for clients running outside the cluster. Use `localhost:30092` as your bootstrap server:
+
+```bash
+# Produce
+kafka-console-producer.sh --bootstrap-server localhost:30092 --topic test
+
+# Consume
+kafka-console-consumer.sh --bootstrap-server localhost:30092 --topic test --from-beginning
+```
+
+Any Kafka-compatible client library can connect using `localhost:30092` as the bootstrap address.
 
 ## Architecture
 
