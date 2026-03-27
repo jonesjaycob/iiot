@@ -1,0 +1,135 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noaa-alerts-script
+  namespace: industrial-iot
+data:
+  noaa_alerts.py: |
+    """
+    NOAA Critical Weather Alerts Pipeline.
+    Fetches active severe/extreme alerts from the NOAA Weather API,
+    transforms them into a structured DataFrame, writes Parquet to MinIO,
+    and publishes summaries to AutoMQ.
+    """
+    import json
+    import os
+    import sys
+    from datetime import datetime
+    from urllib.request import urlopen, Request
+    from urllib.error import URLError
+
+    from pyspark.sql import SparkSession
+    from pyspark.sql.types import (
+        StructType, StructField, StringType, TimestampType, DoubleType
+    )
+
+    S3_ENDPOINT = os.environ.get(
+        "S3_ENDPOINT", "http://minio.industrial-iot.svc.cluster.local:9000"
+    )
+    OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "s3a://process-archive/noaa-alerts/")
+    NOAA_API = os.environ.get(
+        "NOAA_API_URL",
+        "https://api.weather.gov/alerts/active?severity=Extreme,Severe"
+    )
+    KAFKA_BOOTSTRAP = os.environ.get(
+        "KAFKA_BOOTSTRAP", "automq-broker.industrial-iot.svc.cluster.local:9092"
+    )
+    KAFKA_TOPIC = os.environ.get("KAFKA_TOPIC", "noaa-critical-alerts")
+
+    def fetch_alerts():
+        """Fetch active critical alerts from the NOAA Weather API."""
+        req = Request(NOAA_API, headers={"User-Agent": "iiot-noaa-alerts/1.0", "Accept": "application/geo+json"})
+        try:
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode())
+            features = data.get("features", [])
+            print(f"Fetched {len(features)} critical alerts from NOAA")
+            return features
+        except URLError as e:
+            print(f"ERROR: Failed to fetch NOAA alerts: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    def parse_alerts(features):
+        """Extract structured rows from GeoJSON alert features."""
+        rows = []
+        for f in features:
+            props = f.get("properties", {})
+            onset = props.get("onset")
+            expires = props.get("expires")
+            rows.append((
+                props.get("id", ""),
+                props.get("event", ""),
+                props.get("severity", ""),
+                props.get("urgency", ""),
+                props.get("certainty", ""),
+                props.get("areaDesc", ""),
+                props.get("headline", ""),
+                props.get("description", ""),
+                props.get("senderName", ""),
+                datetime.fromisoformat(onset.replace("Z", "+00:00")) if onset else None,
+                datetime.fromisoformat(expires.replace("Z", "+00:00")) if expires else None,
+                datetime.utcnow(),
+            ))
+        return rows
+
+    schema = StructType([
+        StructField("alert_id", StringType()),
+        StructField("event", StringType()),
+        StructField("severity", StringType()),
+        StructField("urgency", StringType()),
+        StructField("certainty", StringType()),
+        StructField("area", StringType()),
+        StructField("headline", StringType()),
+        StructField("description", StringType()),
+        StructField("sender", StringType()),
+        StructField("onset", TimestampType()),
+        StructField("expires", TimestampType()),
+        StructField("ingested_at", TimestampType()),
+    ])
+
+    spark = SparkSession.builder \
+        .appName("noaa-critical-alerts") \
+        .config("spark.hadoop.fs.s3a.endpoint", S3_ENDPOINT) \
+        .config("spark.hadoop.fs.s3a.access.key", os.environ["AWS_ACCESS_KEY_ID"]) \
+        .config("spark.hadoop.fs.s3a.secret.key", os.environ["AWS_SECRET_ACCESS_KEY"]) \
+        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+        .getOrCreate()
+
+    # --- Fetch and parse ---
+    features = fetch_alerts()
+    if not features:
+        print("No critical alerts active. Exiting.")
+        spark.stop()
+        sys.exit(0)
+
+    rows = parse_alerts(features)
+    df = spark.createDataFrame(rows, schema=schema)
+
+    df.show(truncate=60)
+    print(f"Total critical alerts: {df.count()}")
+
+    # --- Write Parquet to MinIO partitioned by severity and date ---
+    partition_date = datetime.utcnow().strftime("%Y-%m-%d")
+    output = f"{OUTPUT_PATH}dt={partition_date}"
+    df.write.mode("append").partitionBy("severity").parquet(output)
+    print(f"Wrote alerts to {output}")
+
+    # --- Publish summaries to AutoMQ ---
+    summaries = df.select("alert_id", "event", "severity", "urgency", "area", "headline") \
+        .toJSON().collect()
+
+    # Use Kafka producer via spark structured streaming write
+    summary_df = spark.read.json(spark.sparkContext.parallelize(summaries))
+    summary_df.selectExpr("to_json(struct(*)) AS value") \
+        .write \
+        .format("kafka") \
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP) \
+        .option("topic", KAFKA_TOPIC) \
+        .save()
+
+    print(f"Published {len(summaries)} alert summaries to {KAFKA_TOPIC}")
+
+    spark.stop()
+    print("NOAA critical alerts pipeline complete.")

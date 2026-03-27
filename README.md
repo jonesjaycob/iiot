@@ -3,15 +3,18 @@
 Kubernetes-native IIoT stack replacing traditional SCADA, managed by Flux GitOps on Docker Desktop.
 
 ```
-AutoMQ (Kafka-compatible, S3-backed via MinIO)
-       |
-  +----+----+
-  |         |
-MinIO/S3   MinIO/S3
-(raw)      (iceberg-warehouse)
-               |
-             Spark
-           (compaction)
+       NOAA Weather API
+              |
+        Spark (fetch + transform)
+              |
+    +---------+---------+
+    |                   |
+  MinIO/S3           AutoMQ
+  (parquet archive)  (critical alerts topic)
+    |
+  Spark (compaction CronJob)
+    |
+  Argo Workflows (orchestration)
 ```
 
 ## Prerequisites
@@ -48,6 +51,12 @@ kubectl apply -k infrastructure/automq/
 
 # 6. Deploy Spark compaction (CronJob)
 kubectl apply -k infrastructure/spark/
+
+# 7. Deploy Argo Workflows
+kubectl apply -k infrastructure/argo/
+
+# 8. Deploy NOAA alerts pipeline
+kubectl apply -k apps/noaa-alerts/
 ```
 
 Or use the bootstrap script:
@@ -76,6 +85,12 @@ kubectl exec -n industrial-iot deploy/minio -- mc ls local/
 
 # Check Spark compaction CronJob
 kubectl get cronjob -n industrial-iot
+
+# Check Argo CronWorkflows
+kubectl get cronworkflows -n industrial-iot
+
+# Check NOAA alerts output in MinIO
+kubectl exec -n industrial-iot deploy/minio -- mc ls local/process-archive/noaa-alerts/
 ```
 
 ## Access Services
@@ -83,6 +98,7 @@ kubectl get cronjob -n industrial-iot
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | MinIO Console | http://localhost:30301 | minioadmin / minio-secret-key-change-me |
+| Argo Workflows | http://localhost:30500 | (no auth) |
 | AutoMQ (Kafka) | localhost:30092 | (no auth) |
 
 Or use port-forwarding:
@@ -109,15 +125,17 @@ Any Kafka-compatible client library can connect using `localhost:30092` as the b
 
 ### Namespaces
 
-- `industrial-iot` -- AutoMQ, MinIO, Spark
+- `industrial-iot` -- AutoMQ, MinIO, Spark, Argo Workflows, NOAA Alerts
 
 ### Dependency Order (enforced by Flux)
 
 ```
 1. Namespaces + Helm sources
-2. MinIO          (S3 must be ready for AutoMQ + Iceberg)
-3. AutoMQ         (streaming)
-4. Spark          (compaction CronJob, needs MinIO)
+2. MinIO            (S3 must be ready for AutoMQ + Spark)
+3. AutoMQ           (streaming)
+4. Spark            (compaction CronJob, needs MinIO)
+5. Argo Workflows   (workflow orchestration)
+6. NOAA Alerts      (Argo CronWorkflow, needs Spark + AutoMQ + MinIO)
 ```
 
 ### Components
@@ -128,11 +146,33 @@ Any Kafka-compatible client library can connect using `localhost:30092` as the b
 | AutoMQ Controller | `automqinc/automq:latest` | industrial-iot |
 | AutoMQ Broker | `automqinc/automq:latest` | industrial-iot |
 | Spark Compaction | `apache/spark:3.5.4-python3` (CronJob) | industrial-iot |
+| Argo Workflows | `argo/argo-workflows` Helm chart | industrial-iot |
+| NOAA Alerts | `apache/spark:3.5.4-python3` (Argo CronWorkflow) | industrial-iot |
+
+### NOAA Critical Alerts Pipeline
+
+The `noaa-alerts` app runs as an Argo CronWorkflow every 15 minutes:
+
+1. Fetches active Extreme/Severe weather alerts from the NOAA Weather API (`api.weather.gov`)
+2. Parses GeoJSON features into a structured Spark DataFrame
+3. Writes partitioned Parquet files to `s3://process-archive/noaa-alerts/` in MinIO
+4. Publishes alert summaries to the `noaa-critical-alerts` topic on AutoMQ
+
+Consume alerts from outside the cluster:
+
+```bash
+kafka-console-consumer.sh --bootstrap-server localhost:30092 \
+  --topic noaa-critical-alerts --from-beginning
+```
 
 ## Teardown
 
 ```bash
+# Remove apps
+kubectl delete -k apps/noaa-alerts/
+
 # Remove infrastructure (reverse order)
+kubectl delete -k infrastructure/argo/
 kubectl delete -k infrastructure/spark/
 kubectl delete -k infrastructure/automq/
 kubectl delete -k infrastructure/minio/
