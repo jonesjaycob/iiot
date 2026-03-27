@@ -5,10 +5,3 @@ metadata:
   name: industrial-iot
   labels:
     toolkit.fluxcd.io/tenant: industrial
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: monitoring
-  labels:
-    toolkit.fluxcd.io/tenant: monitoring

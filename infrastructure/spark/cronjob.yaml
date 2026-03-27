@@ -22,9 +22,9 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: spark
-              image: bitnami/spark:latest
+              image: apache/spark:3.5.4-python3
               command:
-                - /opt/bitnami/spark/bin/spark-submit
+                - /opt/spark/bin/spark-submit
                 - --master
                 - local[*]
                 - --packages
